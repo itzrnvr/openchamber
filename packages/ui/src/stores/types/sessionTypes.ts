@@ -194,4 +194,14 @@ export interface SessionStore {
      revertToMessage: (sessionId: string, messageId: string) => Promise<void>;
      setPendingInputText: (text: string | null) => void;
      consumePendingInputText: () => string | null;
+
+     // Command Execution Methods
+     executeCommand: (command: { name: string; description?: string }) => Promise<void>;
+     canExecuteCommand: (commandName: string) => boolean;
+     getCommandHistory: () => Array<{ command: string; timestamp: number; success: boolean }>;
+     clearCommandHistory: () => void;
+
+     // Command State
+     commandHistory: Array<{ command: string; timestamp: number; success: boolean }>;
+     lastExecutedCommand?: { name: string; timestamp: number };
  }

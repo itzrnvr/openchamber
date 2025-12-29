@@ -1,9 +1,10 @@
 import React from 'react';
-import { RiCommandLine, RiFileLine, RiFlashlightLine, RiRefreshLine, RiScissorsLine, RiTerminalBoxLine } from '@remixicon/react';
+import { RiCommandLine, RiFileLine, RiFlashlightLine, RiRefreshLine, RiScissorsLine, RiTerminalBoxLine, RiStopLine, RiArrowGoBackLine, RiArrowGoForwardLine, RiPencilLine, RiDeleteBinLine, RiContractLine } from '@remixicon/react';
 import { cn } from '@/lib/utils';
 import { opencodeClient } from '@/lib/opencode/client';
 import { useSessionStore } from '@/stores/useSessionStore';
 import { useShallow } from 'zustand/react/shallow';
+import { opencodeApi } from '@/lib/api/opencodeApi';
 import { ScrollableOverlay } from '@/components/ui/ScrollableOverlay';
 
 interface CommandInfo {
@@ -29,15 +30,52 @@ export const CommandAutocomplete = React.forwardRef<CommandAutocompleteHandle, C
   onCommandSelect,
   onClose
 }, ref) => {
-  const { hasMessagesInCurrentSession } = useSessionStore(
+  const { hasMessagesInCurrentSession, currentSessionId } = useSessionStore(
     useShallow((state) => {
       const sessionId = state.currentSessionId;
       const messageCount = sessionId ? (state.messages.get(sessionId)?.length ?? 0) : 0;
       return {
         hasMessagesInCurrentSession: messageCount > 0,
+        currentSessionId: sessionId,
       };
     })
   );
+
+  /**
+   * Check if a command is available based on current session state
+   */
+  const isCommandAvailable = (command: CommandInfo): boolean => {
+    if (!command.isBuiltIn) return true; // Custom commands are always available
+    
+    // Get session state for validation
+    const sessionMessages = currentSessionId ? useSessionStore.getState().messages.get(currentSessionId) || [] : [];
+    const session = currentSessionId ? useSessionStore.getState().sessions.find(s => s.id === currentSessionId) : undefined;
+    
+    switch (command.name) {
+      case 'init':
+        return !hasMessagesInCurrentSession;
+      case 'summarize':
+        return hasMessagesInCurrentSession;
+      case 'revert':
+      case 'undo':
+        return sessionMessages.length > 1;
+      case 'unrevert':
+      case 'redo':
+        return !!session?.revert?.messageID;
+      case 'abort':
+        // Check if there's an active operation
+        return useSessionStore.getState().sessionActivityPhase?.get(currentSessionId || '') === 'busy';
+      case 'edit':
+        // Check if last message is from user
+        return sessionMessages.length > 0 && 
+               sessionMessages[sessionMessages.length - 1]?.info.role === 'user';
+      case 'clear':
+      case 'compact':
+        return sessionMessages.length > 0;
+      default:
+        return true;
+    }
+  };
 
   const [commands, setCommands] = React.useState<CommandInfo[]>([]);
   const [loading, setLoading] = React.useState(false);
@@ -83,6 +121,14 @@ export const CommandAutocomplete = React.forwardRef<CommandAutocompleteHandle, C
             ? []
             : [{ name: 'init', description: 'Create/update AGENTS.md file', isBuiltIn: true }]),
           { name: 'summarize', description: 'Generate a summary of the current session', isBuiltIn: true },
+          { name: 'revert', description: 'Revert session to previous state', isBuiltIn: true },
+          { name: 'unrevert', description: 'Undo revert operation', isBuiltIn: true },
+          { name: 'abort', description: 'Interrupt current operation', isBuiltIn: true },
+          { name: 'undo', description: 'Undo last action', isBuiltIn: true },
+          { name: 'redo', description: 'Redo last action', isBuiltIn: true },
+          { name: 'edit', description: 'Edit last message', isBuiltIn: true },
+          { name: 'clear', description: 'Clear current session', isBuiltIn: true },
+          { name: 'compact', description: 'Compact session history', isBuiltIn: true },
         ];
 
         const commandMap = new Map<string, CommandInfo>();
@@ -99,7 +145,9 @@ export const CommandAutocomplete = React.forwardRef<CommandAutocompleteHandle, C
               cmd.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
               (cmd.description && cmd.description.toLowerCase().includes(searchQuery.toLowerCase()))
             )
-          : allCommands).filter(cmd => allowInitCommand || cmd.name !== 'init');
+          : allCommands)
+          .filter(cmd => allowInitCommand || cmd.name !== 'init')
+          .filter(cmd => isCommandAvailable(cmd));
 
         filtered.sort((a, b) => {
           const aStartsWith = a.name.toLowerCase().startsWith(searchQuery.toLowerCase());
@@ -118,6 +166,14 @@ export const CommandAutocomplete = React.forwardRef<CommandAutocompleteHandle, C
             ? []
             : [{ name: 'init', description: 'Create/update AGENTS.md file', isBuiltIn: true }]),
           { name: 'summarize', description: 'Generate a summary of the current session', isBuiltIn: true },
+          { name: 'revert', description: 'Revert session to previous state', isBuiltIn: true },
+          { name: 'unrevert', description: 'Undo revert operation', isBuiltIn: true },
+          { name: 'abort', description: 'Interrupt current operation', isBuiltIn: true },
+          { name: 'undo', description: 'Undo last action', isBuiltIn: true },
+          { name: 'redo', description: 'Redo last action', isBuiltIn: true },
+          { name: 'edit', description: 'Edit last message', isBuiltIn: true },
+          { name: 'clear', description: 'Clear current session', isBuiltIn: true },
+          { name: 'compact', description: 'Compact session history', isBuiltIn: true },
         ];
 
         const filtered = (searchQuery
@@ -125,7 +181,9 @@ export const CommandAutocomplete = React.forwardRef<CommandAutocompleteHandle, C
               cmd.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
               (cmd.description && cmd.description.toLowerCase().includes(searchQuery.toLowerCase()))
             )
-          : builtInCommands).filter(cmd => allowInitCommand || cmd.name !== 'init');
+          : builtInCommands)
+          .filter(cmd => allowInitCommand || cmd.name !== 'init')
+          .filter(cmd => isCommandAvailable(cmd));
 
         setCommands(filtered);
       } finally {
@@ -186,6 +244,22 @@ export const CommandAutocomplete = React.forwardRef<CommandAutocompleteHandle, C
         return <RiFileLine className="h-3.5 w-3.5 text-green-500" />;
       case 'summarize':
         return <RiScissorsLine className="h-3.5 w-3.5 text-purple-500" />;
+      case 'revert':
+        return <RiArrowGoBackLine className="h-3.5 w-3.5 text-blue-500" />;
+      case 'unrevert':
+        return <RiArrowGoForwardLine className="h-3.5 w-3.5 text-blue-500" />;
+      case 'abort':
+        return <RiStopLine className="h-3.5 w-3.5 text-red-500" />;
+      case 'undo':
+        return <RiArrowGoBackLine className="h-3.5 w-3.5 text-yellow-500" />;
+      case 'redo':
+        return <RiArrowGoForwardLine className="h-3.5 w-3.5 text-yellow-500" />;
+      case 'edit':
+        return <RiPencilLine className="h-3.5 w-3.5 text-cyan-500" />;
+      case 'clear':
+        return <RiDeleteBinLine className="h-3.5 w-3.5 text-orange-500" />;
+      case 'compact':
+        return <RiContractLine className="h-3.5 w-3.5 text-indigo-500" />;
       case 'test':
       case 'build':
       case 'run':
@@ -243,7 +317,7 @@ export const CommandAutocomplete = React.forwardRef<CommandAutocompleteHandle, C
             ))}
             {commands.length === 0 && (
               <div className="px-3 py-2 typography-ui-label text-muted-foreground">
-                No commands found
+                {searchQuery ? 'No commands found' : currentSessionId ? 'No commands available in current context' : 'No active session for commands'}
               </div>
             )}
           </div>

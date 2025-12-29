@@ -36,6 +36,9 @@ import {
     DropdownMenuItem,
     DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { opencodeClient } from '@/lib/opencode/client';
+import { useMessageStore } from '@/stores/messageStore';
+import { opencodeApi } from '@/lib/api/opencodeApi';
 
 const MAX_VISIBLE_TEXTAREA_LINES = 8;
 const EMPTY_QUEUE: QueuedMessage[] = [];
@@ -795,8 +798,20 @@ export const ChatInput: React.FC<ChatInputProps> = ({ onOpenSettings, scrollToBo
         textareaRef.current?.focus();
     };
 
-    const handleCommandSelect = (command: { name: string; description?: string; agent?: string; model?: string }) => {
+    const handleCommandSelect = async (command: { name: string; description?: string; agent?: string; model?: string }) => {
+        
+        // Check if this is a built-in command that should be executed immediately
+        const builtInCommands = ['revert', 'unrevert', 'abort', 'undo', 'redo', 'edit', 'clear', 'compact'];
+        
+        if (builtInCommands.includes(command.name)) {
+            // Execute the command immediately
+            await executeCommand(command);
+            setShowCommandAutocomplete(false);
+            setCommandQuery('');
+            return;
+        }
 
+        // For custom commands, insert the command text as before
         setMessage(`/${command.name} `);
 
         const textareaElement = textareaRef.current as HTMLTextAreaElement & { _commandMetadata?: typeof command };
@@ -813,6 +828,193 @@ export const ChatInput: React.FC<ChatInputProps> = ({ onOpenSettings, scrollToBo
                 textareaRef.current.setSelectionRange(textareaRef.current.value.length, textareaRef.current.value.length);
             }
         }, 0);
+    };
+
+    /**
+     * Execute a built-in command
+     * Handles all the new slash commands with proper error handling
+     */
+    const executeCommand = async (command: { name: string; description?: string }) => {
+        const { currentSessionId } = useSessionStore.getState();
+        
+        if (!currentSessionId) {
+            toast.error('No active session');
+            return;
+        }
+
+        try {
+            switch (command.name) {
+                case 'revert':
+                    await handleRevertCommand(currentSessionId);
+                    break;
+                case 'unrevert':
+                    await handleUnrevertCommand(currentSessionId);
+                    break;
+                case 'abort':
+                    await handleAbortCommand(currentSessionId);
+                    break;
+                case 'undo':
+                    await handleUndoCommand(currentSessionId);
+                    break;
+                case 'redo':
+                    await handleRedoCommand(currentSessionId);
+                    break;
+                case 'edit':
+                    await handleEditCommand(currentSessionId);
+                    break;
+                case 'clear':
+                    await handleClearCommand(currentSessionId);
+                    break;
+                case 'compact':
+                    await handleCompactCommand(currentSessionId);
+                    break;
+                default:
+                    toast.error(`Unknown command: ${command.name}`);
+            }
+        } catch (error) {
+            console.error(`Command ${command.name} failed:`, error);
+            toast.error(`Failed to execute ${command.name}: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    };
+
+    /**
+     * Handle revert command - revert session to previous state
+     */
+    const handleRevertCommand = async (sessionId: string) => {
+        try {
+            const lastMessageId = getLastMessageId(sessionId);
+            if (!lastMessageId) {
+                throw new Error('No messages to revert to');
+            }
+
+            const result = await opencodeClient.revertSession(sessionId, lastMessageId);
+            toast.success('Session reverted successfully');
+            return result;
+        } catch (error) {
+            throw new Error(`Failed to revert: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    };
+
+    /**
+     * Handle unrevert command - undo a revert operation
+     */
+    const handleUnrevertCommand = async (sessionId: string) => {
+        try {
+            const result = await opencodeClient.unrevertSession(sessionId);
+            toast.success('Revert undone successfully');
+            return result;
+        } catch (error) {
+            throw new Error(`Failed to unrevert: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    };
+
+    /**
+     * Handle abort command - interrupt current operation
+     */
+    const handleAbortCommand = async (sessionId: string) => {
+        try {
+            const result = await opencodeClient.abortSession(sessionId);
+            toast.success('Operation aborted successfully');
+            return result;
+        } catch (error) {
+            throw new Error(`Failed to abort: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    };
+
+    /**
+     * Handle undo command - alias for revert with last message
+     */
+    const handleUndoCommand = async (sessionId: string) => {
+        return handleRevertCommand(sessionId);
+    };
+
+    /**
+     * Handle redo command - alias for unrevert
+     */
+    const handleRedoCommand = async (sessionId: string) => {
+        return handleUnrevertCommand(sessionId);
+    };
+
+    /**
+     * Handle edit command - edit last user message
+     */
+    const handleEditCommand = async (sessionId: string) => {
+        try {
+            const lastUserMessage = getLastUserMessage(sessionId);
+            if (!lastUserMessage) {
+                throw new Error('No user messages to edit');
+            }
+
+            const currentContent = lastUserMessage.content;
+            const newContent = prompt('Edit your message:', currentContent);
+            
+            if (!newContent || newContent === currentContent) {
+                toast.info('Edit cancelled');
+                return;
+            }
+
+            const result = await opencodeApi.editMessage(sessionId, lastUserMessage.id, newContent);
+            toast.success('Message updated successfully');
+            return result;
+        } catch (error) {
+            throw new Error(`Failed to edit message: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    };
+
+    /**
+     * Handle clear command - clear current session
+     */
+    const handleClearCommand = async (sessionId: string) => {
+        if (!confirm('Are you sure you want to clear this session? This cannot be undone.')) {
+            toast.info('Clear cancelled');
+            return;
+        }
+
+        try {
+            const result = await opencodeApi.clearSession(sessionId);
+            toast.success('Session cleared successfully');
+            return result;
+        } catch (error) {
+            throw new Error(`Failed to clear session: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    };
+
+    /**
+     * Handle compact command - compact session history
+     */
+    const handleCompactCommand = async (sessionId: string) => {
+        try {
+            const result = await opencodeApi.compactSession(sessionId);
+            toast.success('Session compacted successfully');
+            return result;
+        } catch (error) {
+            throw new Error(`Failed to compact session: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    };
+
+    /**
+     * Helper function to get last message ID for revert operations
+     */
+    const getLastMessageId = (sessionId: string): string | null => {
+        const messages = useMessageStore.getState().messages.get(sessionId) || [];
+        if (messages.length <= 1) return null;
+        return messages[messages.length - 2]?.info.id || null;
+    };
+
+    /**
+     * Helper function to get last user message for edit operations
+     */
+    const getLastUserMessage = (sessionId: string) => {
+        const messages = useMessageStore.getState().messages.get(sessionId) || [];
+        for (let i = messages.length - 1; i >= 0; i--) {
+            if (messages[i].info.role === 'user') {
+                return {
+                    id: messages[i].info.id,
+                    content: messages[i].content
+                };
+            }
+        }
+        return null;
     };
 
     React.useEffect(() => {

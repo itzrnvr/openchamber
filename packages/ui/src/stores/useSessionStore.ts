@@ -93,6 +93,11 @@ export const useSessionStore = create<SessionStore>()(
             abortPromptSessionId: null,
             abortPromptExpiresAt: null,
             sessionActivityPhase: new Map(),
+
+            // Command State
+            commandHistory: [],
+            lastExecutedCommand: undefined,
+
             userSummaryTitles: new Map(),
             pendingInputText: null,
             newSessionDraft: { open: true, directoryOverride: null, parentID: null },
@@ -564,6 +569,111 @@ export const useSessionStore = create<SessionStore>()(
                     }
                     return text;
                 },
+
+                // Command Execution Methods
+                executeCommand: async (command: { name: string; description?: string }) => {
+                    const { currentSessionId } = get();
+                    
+                    if (!currentSessionId) {
+                        throw new Error('No active session');
+                    }
+
+                    try {
+                        switch (command.name) {
+                            case 'revert':
+                                await get().revertToMessage(currentSessionId, getLastMessageId(currentSessionId));
+                                break;
+                            case 'unrevert':
+                                await opencodeClient.unrevertSession(currentSessionId);
+                                break;
+                            case 'abort':
+                                await opencodeClient.abortSession(currentSessionId);
+                                break;
+                            case 'undo':
+                                await get().revertToMessage(currentSessionId, getLastMessageId(currentSessionId));
+                                break;
+                            case 'redo':
+                                await opencodeClient.unrevertSession(currentSessionId);
+                                break;
+                            case 'edit':
+                                await handleEditCommand(currentSessionId);
+                                break;
+                            case 'clear':
+                                await handleClearCommand(currentSessionId);
+                                break;
+                            case 'compact':
+                                await handleCompactCommand(currentSessionId);
+                                break;
+                            default:
+                                throw new Error(`Unknown command: ${command.name}`);
+                        }
+                        
+                        // Add to command history
+                        set((state) => ({
+                            commandHistory: [...state.commandHistory, {
+                                command: command.name,
+                                timestamp: Date.now(),
+                                success: true
+                            }],
+                            lastExecutedCommand: {
+                                name: command.name,
+                                timestamp: Date.now()
+                            }
+                        }));
+                        
+                    } catch (error) {
+                        // Add failed command to history
+                        set((state) => ({
+                            commandHistory: [...state.commandHistory, {
+                                command: command.name,
+                                timestamp: Date.now(),
+                                success: false
+                            }]
+                        }));
+                        throw error;
+                    }
+                },
+
+                canExecuteCommand: (commandName: string) => {
+                    const { currentSessionId, sessions, messages } = get();
+                    
+                    if (!currentSessionId) return false;
+
+                    const sessionMessages = messages.get(currentSessionId) || [];
+                    const session = sessions.find(s => s.id === currentSessionId);
+
+                    switch (commandName) {
+                        case 'revert':
+                            return sessionMessages.length > 1;
+                        case 'unrevert':
+                            return !!session?.revert?.messageID;
+                        case 'abort':
+                            // Check if there's an active operation
+                            return get().sessionActivityPhase?.get(currentSessionId) === 'busy';
+                        case 'undo':
+                            return sessionMessages.length > 1;
+                        case 'redo':
+                            return !!session?.revert?.messageID;
+                        case 'edit':
+                            // Check if last message is from user
+                            return sessionMessages.length > 0 && 
+                                   sessionMessages[sessionMessages.length - 1].info.role === 'user';
+                        case 'clear':
+                            return sessionMessages.length > 0;
+                        case 'compact':
+                            return sessionMessages.length > 10; // Only allow compaction if meaningful
+                        default:
+                            return true;
+                    }
+                },
+
+                getCommandHistory: () => {
+                    return get().commandHistory;
+                },
+
+                clearCommandHistory: () => {
+                    set({ commandHistory: [] });
+                },
             }),
         {
             name: "composed-session-store",
@@ -760,6 +870,88 @@ useSessionStore.setState({
     abortPromptSessionId: null,
     abortPromptExpiresAt: null,
 });
+
+/**
+ * Helper function to get last message ID for revert operations
+ */
+const getLastMessageId = (sessionId: string): string | null => {
+    const messages = useMessageStore.getState().messages.get(sessionId) || [];
+    if (messages.length <= 1) return null;
+    return messages[messages.length - 2]?.info.id || null;
+};
+
+/**
+ * Helper function to get last user message for edit operations
+ */
+const getLastUserMessage = (sessionId: string) => {
+    const messages = useMessageStore.getState().messages.get(sessionId) || [];
+    for (let i = messages.length - 1; i >= 0; i--) {
+        if (messages[i].info.role === 'user') {
+            return {
+                id: messages[i].info.id,
+                content: messages[i].content
+            };
+        }
+    }
+    return null;
+};
+
+/**
+ * Handle edit command - edit last user message
+ */
+const handleEditCommand = async (sessionId: string) => {
+    try {
+        const lastUserMessage = getLastUserMessage(sessionId);
+        if (!lastUserMessage) {
+            throw new Error('No user messages to edit');
+        }
+
+        const currentContent = lastUserMessage.content;
+        const newContent = prompt('Edit your message:', currentContent);
+        
+        if (!newContent || newContent === currentContent) {
+            toast.info('Edit cancelled');
+            return;
+        }
+
+        const result = await opencodeApi.editMessage(sessionId, lastUserMessage.id, newContent);
+        toast.success('Message updated successfully');
+        return result;
+    } catch (error) {
+        throw new Error(`Failed to edit message: ${error instanceof Error ? error.message : String(error)}`);
+    }
+};
+
+/**
+ * Handle clear command - clear current session
+ */
+const handleClearCommand = async (sessionId: string) => {
+    if (!confirm('Are you sure you want to clear this session? This cannot be undone.')) {
+        toast.info('Clear cancelled');
+        return;
+    }
+
+    try {
+        const result = await opencodeApi.clearSession(sessionId);
+        toast.success('Session cleared successfully');
+        return result;
+    } catch (error) {
+        throw new Error(`Failed to clear session: ${error instanceof Error ? error.message : String(error)}`);
+    }
+};
+
+/**
+ * Handle compact command - compact session history
+ */
+const handleCompactCommand = async (sessionId: string) => {
+    try {
+        const result = await opencodeApi.compactSession(sessionId);
+        toast.success('Session compacted successfully');
+        return result;
+    } catch (error) {
+        throw new Error(`Failed to compact session: ${error instanceof Error ? error.message : String(error)}`);
+    }
+};
 
 if (typeof window !== "undefined") {
     window.__zustand_session_store__ = useSessionStore;
