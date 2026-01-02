@@ -23,6 +23,7 @@ import { cn } from '@/lib/utils';
 import { ServerFilePicker } from './ServerFilePicker';
 import { ModelControls } from './ModelControls';
 import { parseAgentMentions } from '@/lib/messages/agentMentions';
+import { flattenAssistantTextParts } from '@/lib/messages/messageText';
 import { StatusRow } from './StatusRow';
 import { useAssistantStatus } from '@/hooks/useAssistantStatus';
 import { useCurrentSessionActivity } from '@/hooks/useSessionActivity';
@@ -1010,7 +1011,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ onOpenSettings, scrollToBo
             if (messages[i].info.role === 'user') {
                 return {
                     id: messages[i].info.id,
-                    content: messages[i].content
+                    content: flattenAssistantTextParts(messages[i].parts)
                 };
             }
         }

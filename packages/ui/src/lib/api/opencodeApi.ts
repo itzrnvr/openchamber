@@ -9,13 +9,11 @@ const API_BASE = '/api';
 
 /**
  * Get authentication headers for API calls
- * Includes bearer token and version information
+ * Authentication is handled by server via cookies/session
  */
 const getAuthHeaders = () => {
-  const authToken = useSessionStore.getState().authToken;
   return {
     'Content-Type': 'application/json',
-    'Authorization': `Bearer ${authToken}`,
     'X-OpenChamber-Version': '1.0'
   };
 };
@@ -29,7 +27,7 @@ const handleApiError = async (response: Response): Promise<never> => {
     const errorData = await response.json();
     const errorMessage = errorData.message || errorData.error || `HTTP ${response.status}`;
     throw new Error(errorMessage);
-  } catch (jsonError) {
+  } catch {
     throw new Error(`HTTP ${response.status}: ${response.statusText}`);
   }
 };
@@ -135,14 +133,11 @@ export const opencodeApi = {
   }
 };
 
-// Import the session store for authentication
-import { useSessionStore } from '@/stores/useSessionStore';
-
 // Export types for better TypeScript support
 export interface ApiError {
   message: string;
   code?: string;
-  details?: any;
+  details?: Record<string, unknown>;
 }
 
 export interface SessionState {

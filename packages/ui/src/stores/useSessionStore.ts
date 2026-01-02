@@ -16,6 +16,8 @@ import { useDirectoryStore } from "./useDirectoryStore";
 import { useConfigStore } from "./useConfigStore";
 import { EXECUTION_FORK_META_TEXT } from "@/lib/messages/executionMeta";
 import { flattenAssistantTextParts } from "@/lib/messages/messageText";
+import { opencodeApi } from "@/lib/api/opencodeApi";
+import { toast } from "sonner";
 
 export type { AttachedFile, EditPermissionMode };
 export { MEMORY_LIMITS, ACTIVE_SESSION_WINDOW } from "./types/sessionTypes";
@@ -580,18 +582,28 @@ export const useSessionStore = create<SessionStore>()(
 
                     try {
                         switch (command.name) {
-                            case 'revert':
-                                await get().revertToMessage(currentSessionId, getLastMessageId(currentSessionId));
+                            case 'revert': {
+                                const revertMessageId = getLastMessageId(currentSessionId);
+                                if (!revertMessageId) {
+                                    throw new Error('No messages to revert to');
+                                }
+                                await get().revertToMessage(currentSessionId, revertMessageId);
                                 break;
+                            }
                             case 'unrevert':
                                 await opencodeClient.unrevertSession(currentSessionId);
                                 break;
                             case 'abort':
                                 await opencodeClient.abortSession(currentSessionId);
                                 break;
-                            case 'undo':
-                                await get().revertToMessage(currentSessionId, getLastMessageId(currentSessionId));
+                            case 'undo': {
+                                const undoMessageId = getLastMessageId(currentSessionId);
+                                if (!undoMessageId) {
+                                    throw new Error('No messages to undo to');
+                                }
+                                await get().revertToMessage(currentSessionId, undoMessageId);
                                 break;
+                            }
                             case 'redo':
                                 await opencodeClient.unrevertSession(currentSessionId);
                                 break;
@@ -889,7 +901,7 @@ const getLastUserMessage = (sessionId: string) => {
         if (messages[i].info.role === 'user') {
             return {
                 id: messages[i].info.id,
-                content: messages[i].content
+                content: flattenAssistantTextParts(messages[i].parts)
             };
         }
     }

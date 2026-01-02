@@ -4,7 +4,6 @@ import { cn } from '@/lib/utils';
 import { opencodeClient } from '@/lib/opencode/client';
 import { useSessionStore } from '@/stores/useSessionStore';
 import { useShallow } from 'zustand/react/shallow';
-import { opencodeApi } from '@/lib/api/opencodeApi';
 import { ScrollableOverlay } from '@/components/ui/ScrollableOverlay';
 
 interface CommandInfo {
@@ -44,7 +43,7 @@ export const CommandAutocomplete = React.forwardRef<CommandAutocompleteHandle, C
   /**
    * Check if a command is available based on current session state
    */
-  const isCommandAvailable = (command: CommandInfo): boolean => {
+  const isCommandAvailable = React.useCallback((command: CommandInfo): boolean => {
     if (!command.isBuiltIn) return true; // Custom commands are always available
     
     // Get session state for validation
@@ -75,7 +74,7 @@ export const CommandAutocomplete = React.forwardRef<CommandAutocompleteHandle, C
       default:
         return true;
     }
-  };
+  }, [currentSessionId, hasMessagesInCurrentSession]);
 
   const [commands, setCommands] = React.useState<CommandInfo[]>([]);
   const [loading, setLoading] = React.useState(false);
@@ -192,7 +191,7 @@ export const CommandAutocomplete = React.forwardRef<CommandAutocompleteHandle, C
     };
 
     loadCommands();
-  }, [searchQuery, hasMessagesInCurrentSession]);
+  }, [searchQuery, hasMessagesInCurrentSession, isCommandAvailable]);
 
   React.useEffect(() => {
     setSelectedIndex(0);

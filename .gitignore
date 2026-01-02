@@ -26,3 +26,10 @@ local-dev*
 *.njsproj
 *.sln
 *.sw?
+
+.personal/
+AGENTS.md
+openspec
+.opencode
+.agents
+
